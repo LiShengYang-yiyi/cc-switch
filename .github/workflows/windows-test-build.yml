@@ -1,0 +1,85 @@
+name: Windows Test Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref_name:
+        description: "Branch/tag to build (optional, defaults to current)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref_name || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Disable updater signing for test build
+        shell: pwsh
+        run: |
+          $p = 'src-tauri/tauri.conf.json'
+          $json = Get-Content -Raw $p | ConvertFrom-Json
+          if ($null -eq $json.bundle) { $json | Add-Member -NotePropertyName bundle -NotePropertyValue (@{}) }
+          $json.bundle.createUpdaterArtifacts = $false
+          $json | ConvertTo-Json -Depth 100 | Set-Content -Path $p -Encoding UTF8
+          Write-Host 'createUpdaterArtifacts=false set for test build'
+
+      - name: Build Tauri (Windows MSI)
+        run: pnpm tauri build --bundles msi
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Recurse -Filter *.msi | Select-Object -First 1
+          if ($null -eq $msi) {
+            throw 'MSI not found after build.'
+          }
+          Copy-Item $msi.FullName (Join-Path artifacts $msi.Name)
+
+          $exeCandidates = @(
+            'src-tauri/target/release/cc-switch.exe',
+            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($null -ne $exePath) {
+            $portableDir = 'artifacts/CC-Switch-Portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exePath $portableDir
+            'portable=true' | Set-Content -Path (Join-Path $portableDir 'portable.ini') -Encoding UTF8
+            Compress-Archive -Path "$portableDir/*" -DestinationPath 'artifacts/CC-Switch-Windows-Portable.zip' -Force
+            Remove-Item -Recurse -Force $portableDir
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cc-switch-windows-test-build
+          path: artifacts/*
+          if-no-files-found: error
