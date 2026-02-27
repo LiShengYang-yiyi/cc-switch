@@ -196,7 +196,7 @@ impl RequestForwarder {
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
-                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                .forward(provider, app_type, endpoint, &body, &headers, adapter.as_ref())
                 .await
             {
                 Ok(response) => {
@@ -318,7 +318,7 @@ impl RequestForwarder {
 
                                 // 使用同一供应商重试（不计入熔断器）
                                 match self
-                                    .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                    .forward(provider, app_type, endpoint, &body, &headers, adapter.as_ref())
                                     .await
                                 {
                                     Ok(response) => {
@@ -509,7 +509,7 @@ impl RequestForwarder {
 
                             // 使用同一供应商重试（不计入熔断器）
                             match self
-                                .forward(provider, endpoint, &body, &headers, adapter.as_ref())
+                                .forward(provider, app_type, endpoint, &body, &headers, adapter.as_ref())
                                 .await
                             {
                                 Ok(response) => {
@@ -738,6 +738,7 @@ impl RequestForwarder {
     async fn forward(
         &self,
         provider: &Provider,
+        app_type: &AppType,
         endpoint: &str,
         body: &Value,
         headers: &axum::http::HeaderMap,
